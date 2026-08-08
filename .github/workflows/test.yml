@@ -15,9 +15,10 @@ name: Test
 #                    JVM + native tests, mingwX64 klib, example executable
 #   Windows x64   -> windows JNI (MinGW), JVM tests, mingwX64 klib compile
 #
-# No repository secrets are required: the tests consume project dependencies
-# directly, and publishing (which needs the signing key) is only done by the
-# publish workflow.
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   SIGNING_KEY     base64-encoded PGP secret key ring (.gpg, binary)
+#   SIGNING_KEY_ID  8-hex-digit key id (without the 0x prefix)
+#   SIGNING_PASSWORD Passphrase of the signing key
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +42,22 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+
+      - name: Decode signing key
+        run: |
+          echo "${{ secrets.SIGNING_KEY }}" | tr -d ' \n' | base64 -d > "$RUNNER_TEMP/signing-key.gpg"
+          ls -la "$RUNNER_TEMP/signing-key.gpg"
+          head -c 16 "$RUNNER_TEMP/signing-key.gpg" | od -c | head -2
+
+      - name: Publish all platforms to Maven Local
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          -Psigning.keyId="${{ secrets.SIGNING_KEY_ID }}"
+          -Psigning.secretKeyRingFile="${{ runner.temp }}/signing-key.gpg"
+          -Psigning.password="${{ secrets.SIGNING_PASSWORD }}"
+          :webview-kmp:publishToMavenLocal
+          :jni-jvm-darwin-aarch64:publishToMavenLocal
+          :jni-jvm-darwin-x86_64:publishToMavenLocal
 
       - name: Run JVM tests
         run: ./gradlew --no-daemon :webview-kmp:jvmTest
@@ -85,6 +102,21 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Decode signing key
+        run: |
+          echo "${{ secrets.SIGNING_KEY }}" | tr -d ' \n' | base64 -d > "$RUNNER_TEMP/signing-key.gpg"
+          ls -la "$RUNNER_TEMP/signing-key.gpg"
+          head -c 16 "$RUNNER_TEMP/signing-key.gpg" | od -c | head -2
+
+      - name: Publish linux and windows JNI to Maven Local
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          -Psigning.keyId="${{ secrets.SIGNING_KEY_ID }}"
+          -Psigning.secretKeyRingFile="${{ runner.temp }}/signing-key.gpg"
+          -Psigning.password="${{ secrets.SIGNING_PASSWORD }}"
+          :jni-jvm-linux-x86_64:publishToMavenLocal
+          :jni-jvm-windows-x86_64:publishToMavenLocal
+
       - name: Run JVM tests
         run: ./gradlew --no-daemon :webview-kmp:jvmTest
 
@@ -128,6 +160,25 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+
+      - name: Decode signing key
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes(
+            "$env:RUNNER_TEMP\signing-key.gpg",
+            [Convert]::FromBase64String("${{ secrets.SIGNING_KEY }}")
+          )
+          Get-Item "$env:RUNNER_TEMP\signing-key.gpg" | Select-Object Length
+          Format-Hex -Path "$env:RUNNER_TEMP\signing-key.gpg" -Count 16
+
+      - name: Publish windows JNI to Maven Local
+        shell: cmd
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          -Psigning.keyId="${{ secrets.SIGNING_KEY_ID }}"
+          -Psigning.secretKeyRingFile="${{ runner.temp }}\signing-key.gpg"
+          -Psigning.password="${{ secrets.SIGNING_PASSWORD }}"
+          :jni-jvm-windows-x86_64:publishToMavenLocal
 
       - name: Run JVM tests
         run: ./gradlew --no-daemon --stacktrace :webview-kmp:jvmTest
