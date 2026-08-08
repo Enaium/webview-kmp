@@ -118,7 +118,13 @@ fun webviewDefFile(targetName: String, canBuild: Boolean): File {
     val file = File(dir, "webview-$targetName.def")
     val linkerOpts = if (!canBuild) emptyList() else when {
         targetName.startsWith("macos") -> listOf("-framework WebKit", "-ldl")
-        targetName.startsWith("linux") -> pkgConfigLibs(listOf("webkit2gtk-4.1", "gtk+-3.0"))
+        targetName.startsWith("linux") ->
+            // --allow-shlib-undefined: the host's shared libraries (glibc
+            // 2.34+) carry versioned undefined references (e.g.
+            // dlopen@GLIBC_2.34) that only resolve at runtime against the
+            // host's libc; lld would reject them against the bundled
+            // Kotlin/Native sysroot (glibc 2.19).
+            listOf("--allow-shlib-undefined") + pkgConfigLibs(listOf("webkit2gtk-4.1", "gtk+-3.0"))
         targetName.startsWith("mingw") -> listOf(
             "-ladvapi32", "-lole32", "-lshell32",
             "-lshlwapi", "-luser32", "-lversion",
