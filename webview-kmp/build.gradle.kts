@@ -74,7 +74,27 @@ fun pkgConfigLibs(modules: List<String>): List<String> {
             .start()
         val output = process.inputStream.bufferedReader().readText()
         if (process.waitFor() == 0) {
-            output.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            // ld.lld (used by Kotlin/Native) only accepts -l/-L-style flags:
+            // drop GCC-driver flags (-pthread, -Wl,...) and add the host's
+            // multiarch library directory, since lld searches the bundled
+            // Kotlin/Native sysroot rather than the host's default paths.
+            val multiarch = when (hostArch) {
+                "x86_64", "amd64" -> "x86_64-linux-gnu"
+                "aarch64", "arm64" -> "aarch64-linux-gnu"
+                else -> null
+            }
+            val libDirs = listOfNotNull(
+                multiarch?.let { "-L/usr/lib/$it" },
+                multiarch?.let { "-L/lib/$it" },
+                "-ldl",
+            )
+            output.trim().split(Regex("\\s+"))
+                .filter {
+                    it.isNotBlank() &&
+                        !it.startsWith("-pthread") &&
+                        !it.startsWith("-Wl,")
+                }
+                .plus(libDirs)
         } else {
             emptyList()
         }
