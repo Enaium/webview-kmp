@@ -59,20 +59,32 @@ jobs:
       # Per-target publications are used instead of
       # publishAllPublicationsToMavenCentralRepository so that the linux /
       # mingw klibs (built with their embedded static library on the Linux
-      # runners) are not published from here as bindings-only klibs.
-      - name: Publish metadata, jvm and macos target klibs
+      # runners) are not published from here as bindings-only klibs. The
+      # kotlinMultiplatform metadata module is published last since it
+      # redirects consumers to the per-target modules.
+      - name: Publish jvm, macos target klibs and darwin JNI
         run: >
           ./gradlew --no-daemon --stacktrace
           -Psigning.keyId="${{ secrets.SIGNING_KEY_ID }}"
           -Psigning.secretKeyRingFile="${{ runner.temp }}/signing-key.gpg"
           -Psigning.password="${{ secrets.SIGNING_PASSWORD }}"
-          :webview-kmp:publishKotlinMultiplatformPublicationToMavenCentralRepository
           :webview-kmp:publishJvmPublicationToMavenCentralRepository
           :webview-kmp:publishMacosArm64PublicationToMavenCentralRepository
           :webview-kmp:publishMacosX64PublicationToMavenCentralRepository
           :jni-jvm-darwin-aarch64:publishToMavenCentral
           :jni-jvm-darwin-x86_64:publishToMavenCentral
           --continue
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+
+      - name: Publish kotlinMultiplatform metadata last
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          -Psigning.keyId="${{ secrets.SIGNING_KEY_ID }}"
+          -Psigning.secretKeyRingFile="${{ runner.temp }}/signing-key.gpg"
+          -Psigning.password="${{ secrets.SIGNING_PASSWORD }}"
+          :webview-kmp:publishKotlinMultiplatformPublicationToMavenCentralRepository
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
