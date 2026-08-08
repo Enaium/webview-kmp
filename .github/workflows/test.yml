@@ -90,28 +90,14 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Install WebKitGTK and cross toolchains
+      - name: Install WebKitGTK and MinGW cross toolchain
         run: |
-          sudo dpkg --add-architecture arm64
-          # The default Ubuntu mirrors only host amd64; restrict them to
-          # amd64 and add Ubuntu's ports mirror for the arm64 packages.
-          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/ubuntu.list
-          echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             gcc-mingw-w64-x86-64 \
-            g++-mingw-w64-x86-64 \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libwebkit2gtk-4.1-dev:arm64 \
-            libgtk-3-dev:arm64
+            g++-mingw-w64-x86-64
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -138,12 +124,6 @@ jobs:
         # webview_version() is display-independent, so the test runs headless.
         run: ./gradlew --no-daemon :webview-kmp:linuxX64Test
 
-      - name: Compile linuxArm64 klib with embedded static library
-        # Cross-compiles libwebview.a with aarch64-linux-gnu and arm64
-        # WebKitGTK (multiarch) and embeds it into the linuxArm64 cinterop
-        # klib (same as the publish-linux job).
-        run: ./gradlew --no-daemon :webview-kmp:compileKotlinLinuxArm64
-
       - name: Compile mingwX64 klib with embedded static library
         # Cross-compiles libwebview.a with x86_64-w64-mingw32 and embeds it
         # into the mingwX64 cinterop klib (same as the publish-linux job).
@@ -154,6 +134,52 @@ jobs:
 
       - name: Run full build
         run: ./gradlew --no-daemon build
+
+  test-linux-arm64:
+    name: Test Linux ARM64 cross-compilation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Configure JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install ARM64 cross toolchain and WebKitGTK
+        run: |
+          sudo dpkg --add-architecture arm64
+          # The default Ubuntu mirrors only host amd64; restrict them to
+          # amd64 and add Ubuntu's ports mirror for the arm64 packages.
+          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/ubuntu.list
+          echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libgtk-3-dev:arm64
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Compile linuxArm64 klib with embedded static library
+        # Cross-compiles libwebview.a with aarch64-linux-gnu and arm64
+        # WebKitGTK (multiarch) and embeds it into the linuxArm64 cinterop
+        # klib (same as the publish-linux-arm64 job).
+        run: ./gradlew --no-daemon :webview-kmp:compileKotlinLinuxArm64
+
+      - name: Build linux aarch64 JNI library
+        run: ./gradlew --no-daemon :jni-jvm-linux-aarch64:jar
 
   test-windows:
     name: Test Windows x64
