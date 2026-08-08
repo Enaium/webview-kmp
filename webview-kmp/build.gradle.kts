@@ -32,7 +32,10 @@ fun canBuildNativeTarget(targetName: String): Boolean {
     return when {
         hostOs.isMacOsX && targetName.startsWith("macos") -> true
         hostOs.isLinux && targetName == "linuxX64" -> true
-        hostOs.isLinux && targetName == "linuxArm64" && hostArch == "aarch64" -> true
+        // linuxArm64 can be cross-compiled from an x86_64 Linux host with the
+        // aarch64-linux-gnu toolchain and arm64 WebKitGTK packages (multiarch).
+        hostOs.isLinux && targetName == "linuxArm64" &&
+            (hostArch == "aarch64" || hasCrossCompiler("aarch64-linux-gnu-gcc")) -> true
         hostOs.isLinux && targetName == "mingwX64" && hasCrossCompiler("x86_64-w64-mingw32-gcc") -> true
         else -> false
     }
@@ -66,19 +69,28 @@ val cmakeExecutable: String by lazy { resolveCmakeExecutable() }
 // - Apple links the WebKit framework directly.
 // - Linux must link the WebKitGTK/GTK stack found by pkg-config at
 //   configuration time (targets are only configured on Linux hosts).
-fun pkgConfigLibs(modules: List<String>): List<String> {
+// pkg-config --libs output for the given modules, resolved for [targetArch]
+// (which differs from the host when cross-compiling linuxArm64 on x86_64).
+// ld.lld (used by Kotlin/Native) only accepts -l/-L-style flags: GCC-driver
+// flags (-pthread, -Wl,...) and the .pc's own -L paths are dropped, and the
+// target's multiarch library directory is added instead, since lld searches
+// the bundled Kotlin/Native sysroot rather than the host's default paths.
+fun pkgConfigLibs(modules: List<String>, targetArch: String): List<String> {
     if (!hostOs.isLinux) return emptyList()
+    val crossAarch64 = targetArch == "aarch64" && hostArch != "aarch64"
+    val command = if (crossAarch64) {
+        listOf("env", "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig") +
+            listOf("pkg-config", "--libs") + modules
+    } else {
+        listOf("pkg-config", "--libs") + modules
+    }
     return try {
-        val process = ProcessBuilder(listOf("pkg-config", "--libs") + modules)
+        val process = ProcessBuilder(command)
             .redirectErrorStream(true)
             .start()
         val output = process.inputStream.bufferedReader().readText()
         if (process.waitFor() == 0) {
-            // ld.lld (used by Kotlin/Native) only accepts -l/-L-style flags:
-            // drop GCC-driver flags (-pthread, -Wl,...) and add the host's
-            // multiarch library directory, since lld searches the bundled
-            // Kotlin/Native sysroot rather than the host's default paths.
-            val multiarch = when (hostArch) {
+            val multiarch = when (targetArch) {
                 "x86_64", "amd64" -> "x86_64-linux-gnu"
                 "aarch64", "arm64" -> "aarch64-linux-gnu"
                 else -> null
@@ -92,7 +104,8 @@ fun pkgConfigLibs(modules: List<String>): List<String> {
                 .filter {
                     it.isNotBlank() &&
                         !it.startsWith("-pthread") &&
-                        !it.startsWith("-Wl,")
+                        !it.startsWith("-Wl,") &&
+                        !it.startsWith("-L")
                 }
                 .plus(libDirs)
         } else {
@@ -124,7 +137,10 @@ fun webviewDefFile(targetName: String, canBuild: Boolean): File {
             // dlopen@GLIBC_2.34) that only resolve at runtime against the
             // host's libc; lld would reject them against the bundled
             // Kotlin/Native sysroot (glibc 2.19).
-            listOf("--allow-shlib-undefined") + pkgConfigLibs(listOf("webkit2gtk-4.1", "gtk+-3.0"))
+            listOf("--allow-shlib-undefined") + pkgConfigLibs(
+                listOf("webkit2gtk-4.1", "gtk+-3.0"),
+                if (targetName == "linuxArm64") "aarch64" else "x86_64",
+            )
         targetName.startsWith("mingw") -> listOf(
             "-ladvapi32", "-lole32", "-lshell32",
             "-lshlwapi", "-luser32", "-lversion",
@@ -239,7 +255,11 @@ kotlin {
 }
 
 // ==================== Native: build static webview library for each target ====================
-fun registerNativeBuildTasks(targetName: String, cmakeFlags: List<String> = emptyList()) {
+fun registerNativeBuildTasks(
+    targetName: String,
+    cmakeFlags: List<String> = emptyList(),
+    cmakeEnv: Map<String, String> = emptyMap(),
+) {
     val outputDir = layout.buildDirectory.dir("native/$targetName").get().asFile
     val cmakeBuildDir = layout.buildDirectory.dir("cmake-$targetName").get().asFile
 
@@ -250,6 +270,7 @@ fun registerNativeBuildTasks(targetName: String, cmakeFlags: List<String> = empt
             outputDir.mkdirs()
         }
         workingDir = cmakeBuildDir
+        cmakeEnv.forEach { (key, value) -> environment(key, value) }
         commandLine(
             listOf(
                 cmakeExecutable, jniDir.absolutePath,
@@ -294,6 +315,20 @@ if (hostOs.isMacOsX) {
     registerNativeBuildTasks("linuxX64")
     if (hostArch == "aarch64") {
         registerNativeBuildTasks("linuxArm64")
+    } else if (hasCrossCompiler("aarch64-linux-gnu-gcc")) {
+        // Cross-compile the ARM64 static library with the aarch64-linux-gnu
+        // toolchain; pkg-config must resolve the arm64 WebKitGTK/GTK .pc
+        // files installed via multiarch.
+        registerNativeBuildTasks(
+            "linuxArm64",
+            listOf(
+                "-DCMAKE_SYSTEM_NAME=Linux",
+                "-DCMAKE_SYSTEM_PROCESSOR=aarch64",
+                "-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc",
+                "-DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++",
+            ),
+            mapOf("PKG_CONFIG_LIBDIR" to "/usr/lib/aarch64-linux-gnu/pkgconfig"),
+        )
     }
     // Cross-compile the MinGW static library with the
     // x86_64-w64-mingw32 toolchain (canBuildNativeTarget gates on it).

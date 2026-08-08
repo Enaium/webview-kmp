@@ -4,6 +4,7 @@
  * /cn/enaium/webview/native/linux-aarch64/, which NativeLoader
  * (in :webview-kmp's jvmMain) extracts and System.load()s at runtime.
  */
+import java.io.File
 import org.gradle.internal.os.OperatingSystem
 
 plugins {
@@ -26,9 +27,20 @@ val libFile = "libwebview_jni.so"
 val resourceDir = "cn/enaium/webview/native/$classifier"
 
 val hostArch = System.getProperty("os.arch").lowercase()
-// webview's CMake locates WebKitGTK/GTK via pkg-config, which resolves host
-// libraries, so linux-aarch64 can only be built on native aarch64 hosts.
-val canBuildHere = OperatingSystem.current().isLinux && hostArch == "aarch64"
+
+fun hasTool(name: String): Boolean {
+    return System.getenv("PATH").orEmpty().split(File.pathSeparator).any {
+        val f = File(it, name)
+        f.isFile && f.canExecute()
+    }
+}
+
+// Built natively on aarch64 hosts, or cross-compiled from x86_64 hosts with
+// the aarch64-linux-gnu toolchain and arm64 WebKitGTK/GTK packages
+// (multiarch); pkg-config must resolve the arm64 .pc files then.
+val onAarch64Host = hostArch == "aarch64"
+val onX64Cross = hostArch != "aarch64" && hasTool("aarch64-linux-gnu-gcc")
+val canBuildHere = OperatingSystem.current().isLinux && (onAarch64Host || onX64Cross)
 
 val nativeOutputDir = layout.buildDirectory.dir("jni-native/$classifier")
 val cmakeBuildDir = layout.buildDirectory.dir("cmake-jni/$classifier")
@@ -46,7 +58,7 @@ val configureJniLibrary by tasks.registering(Exec::class) {
     workingDir = buildDir
     val javaHome = System.getProperty("java.home") ?: System.getenv("JAVA_HOME") ?: ""
     val jniInclude = if (javaHome.isNotEmpty()) "$javaHome/include" else ""
-    commandLine(
+    val args = mutableListOf(
         "cmake",
         rootProject.file("jni").absolutePath,
         "-DCMAKE_BUILD_TYPE=Release",
@@ -54,6 +66,16 @@ val configureJniLibrary by tasks.registering(Exec::class) {
         "-DJNI_INCLUDE_DIR_PLATFORM=$jniInclude/linux",
         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=${outDir.absolutePath}",
     )
+    if (onX64Cross) {
+        environment("PKG_CONFIG_LIBDIR", "/usr/lib/aarch64-linux-gnu/pkgconfig")
+        args += listOf(
+            "-DCMAKE_SYSTEM_NAME=Linux",
+            "-DCMAKE_SYSTEM_PROCESSOR=aarch64",
+            "-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc",
+            "-DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++",
+        )
+    }
+    commandLine(args)
 }
 
 val buildJniLibrary by tasks.registering(Exec::class) {
