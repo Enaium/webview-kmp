@@ -67,7 +67,7 @@ val configureJniLibrary by tasks.registering(Exec::class) {
         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=${outDir.absolutePath}",
     )
     if (onX64Cross) {
-        environment("PKG_CONFIG_LIBDIR", "/usr/lib/aarch64-linux-gnu/pkgconfig")
+        environment("PKG_CONFIG_LIBDIR", "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig")
         args += listOf(
             "-DCMAKE_SYSTEM_NAME=Linux",
             "-DCMAKE_SYSTEM_PROCESSOR=aarch64",

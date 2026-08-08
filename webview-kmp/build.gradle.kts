@@ -79,7 +79,7 @@ fun pkgConfigLibs(modules: List<String>, targetArch: String): List<String> {
     if (!hostOs.isLinux) return emptyList()
     val crossAarch64 = targetArch == "aarch64" && hostArch != "aarch64"
     val command = if (crossAarch64) {
-        listOf("env", "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig") +
+        listOf("env", "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig") +
             listOf("pkg-config", "--libs") + modules
     } else {
         listOf("pkg-config", "--libs") + modules
@@ -327,7 +327,7 @@ if (hostOs.isMacOsX) {
                 "-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc",
                 "-DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++",
             ),
-            mapOf("PKG_CONFIG_LIBDIR" to "/usr/lib/aarch64-linux-gnu/pkgconfig"),
+            mapOf("PKG_CONFIG_LIBDIR" to "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"),
         )
     }
     // Cross-compile the MinGW static library with the
