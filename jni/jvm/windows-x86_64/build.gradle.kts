@@ -54,6 +54,24 @@ val makeGenerator = when {
 val nativeOutputDir = layout.buildDirectory.dir("jni-native/$classifier")
 val cmakeBuildDir = layout.buildDirectory.dir("cmake-jni/$classifier")
 
+// Linux JDKs only ship the linux JNI headers (include/linux/jni_md.h), so the
+// win32 jni_md.h is fetched from the OpenJDK source tree (pinned tag) for the
+// cross-compiled DLL. On Windows hosts the JDK's own include/win32 is used.
+val win32JniIncludeDir = layout.buildDirectory.dir("win32-jni-include")
+
+val downloadJniMdWindows by tasks.registering(Exec::class) {
+    onlyIf { onLinuxCross }
+    val outDir = win32JniIncludeDir.get().asFile
+    val target = outDir.resolve("jni_md.h")
+    outputs.file(target)
+    doFirst { outDir.mkdirs() }
+    commandLine(
+        "curl", "-fsSL",
+        "https://raw.githubusercontent.com/openjdk/jdk21u/jdk-21%2B35/src/java.base/windows/native/include/jni_md.h",
+        "-o", target.absolutePath,
+    )
+}
+
 val configureJniLibrary by tasks.registering(Exec::class) {
     group = "build"
     description = "cmake-configures webview_jni for $classifier."
@@ -67,12 +85,20 @@ val configureJniLibrary by tasks.registering(Exec::class) {
     workingDir = buildDir
     val javaHome = System.getProperty("java.home") ?: System.getenv("JAVA_HOME") ?: ""
     val jniInclude = if (javaHome.isNotEmpty()) "$javaHome/include" else ""
+    val jniPlatformInclude = if (onLinuxCross) {
+        win32JniIncludeDir.get().asFile.absolutePath
+    } else {
+        "$jniInclude/win32"
+    }
+    if (onLinuxCross) {
+        dependsOn(downloadJniMdWindows)
+    }
     val args = mutableListOf(
         "cmake",
         rootProject.file("jni").absolutePath,
         "-DCMAKE_BUILD_TYPE=Release",
         "-DJNI_INCLUDE_DIR=$jniInclude",
-        "-DJNI_INCLUDE_DIR_PLATFORM=$jniInclude/win32",
+        "-DJNI_INCLUDE_DIR_PLATFORM=$jniPlatformInclude",
         // DLLs are RUNTIME outputs in CMake, not LIBRARY outputs.
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${outDir.absolutePath}",
         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=${outDir.absolutePath}",
