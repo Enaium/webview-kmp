@@ -72,48 +72,56 @@ val cmakeExecutable: String by lazy { resolveCmakeExecutable() }
 // pkg-config --libs output for the given modules, resolved for [targetArch]
 // (which differs from the host when cross-compiling linuxArm64 on x86_64).
 // ld.lld (used by Kotlin/Native) only accepts -l/-L-style flags: GCC-driver
-// flags (-pthread, -Wl,...) and the .pc's own -L paths are dropped, and the
-// target's multiarch library directory is added instead, since lld searches
-// the bundled Kotlin/Native sysroot rather than the host's default paths.
+// flags (-pthread, -Wl,...) are dropped. The linker does NOT default-search
+// the host's standard library dirs (it searches the bundled Kotlin/Native
+// sysroot instead), so the library search dirs are resolved explicitly:
+// - The target's multiarch directory (Debian/Ubuntu layout).
+// - The libdir reported by pkg-config, which covers distros that install
+//   libraries straight into /usr/lib or /usr/local/lib (e.g. Arch Linux).
 fun pkgConfigLibs(modules: List<String>, targetArch: String): List<String> {
     if (!hostOs.isLinux) return emptyList()
     val crossAarch64 = targetArch == "aarch64" && hostArch != "aarch64"
-    val command = if (crossAarch64) {
-        listOf("env", "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig") +
-            listOf("pkg-config", "--libs") + modules
+    val envPrefix = if (crossAarch64) {
+        listOf("env", "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig")
     } else {
-        listOf("pkg-config", "--libs") + modules
-    }
-    return try {
-        val process = ProcessBuilder(command)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().readText()
-        if (process.waitFor() == 0) {
-            val multiarch = when (targetArch) {
-                "x86_64", "amd64" -> "x86_64-linux-gnu"
-                "aarch64", "arm64" -> "aarch64-linux-gnu"
-                else -> null
-            }
-            val libDirs = listOfNotNull(
-                multiarch?.let { "-L/usr/lib/$it" },
-                multiarch?.let { "-L/lib/$it" },
-                "-ldl",
-            )
-            output.trim().split(Regex("\\s+"))
-                .filter {
-                    it.isNotBlank() &&
-                        !it.startsWith("-pthread") &&
-                        !it.startsWith("-Wl,") &&
-                        !it.startsWith("-L")
-                }
-                .plus(libDirs)
-        } else {
-            emptyList()
-        }
-    } catch (_: Exception) {
         emptyList()
     }
+
+    fun runPkgConfig(vararg args: String): List<String> {
+        return try {
+            val process = ProcessBuilder(envPrefix + listOf("pkg-config") + args.toList())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText()
+            if (process.waitFor() == 0) {
+                output.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            } else {
+                emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    val multiarch = when (targetArch) {
+        "x86_64", "amd64" -> "x86_64-linux-gnu"
+        "aarch64", "arm64" -> "aarch64-linux-gnu"
+        else -> null
+    }
+    val pkgConfigLibDirs = runPkgConfig("--variable=libdir", *modules.toTypedArray())
+    val libDirs = (pkgConfigLibDirs + listOfNotNull(
+        multiarch?.let { "/usr/lib/$it" },
+        multiarch?.let { "/lib/$it" },
+    )).distinct().map { "-L$it" }
+
+    return runPkgConfig("--libs", *modules.toTypedArray())
+        .filter {
+            !it.startsWith("-pthread") &&
+                !it.startsWith("-Wl,") &&
+                !it.startsWith("-L")
+        }
+        .plus(libDirs)
+        .plus("-ldl")
 }
 
 // The webview C API is defined in a plain C header (api.h), but the final
